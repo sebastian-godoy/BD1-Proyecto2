@@ -55,3 +55,28 @@ CREATE TABLE CursoHabilitado (
     AnioActual INT,
     CantidadEstudiantesAsignados INT DEFAULT 0
 );
+
+-- Crear la tabla HorarioCurso
+CREATE TABLE HorarioCurso (
+    HorarioCursoID INT AUTO_INCREMENT PRIMARY KEY,
+    CursoHabilitadoID INT,
+    DiaSemana INT,
+    Horario VARCHAR(20)
+);
+
+-- Crear la tabla AsignacionCurso
+CREATE TABLE AsignacionCurso (
+    AsignacionCursoID INT AUTO_INCREMENT PRIMARY KEY,
+    CarnetEstudiante BIGINT,
+    CursoHabilitadoID INT
+);
+
+-- Crear la tabla Notas
+CREATE TABLE Notas (
+    NotasID INT AUTO_INCREMENT PRIMARY KEY,
+    CarnetEstudiante BIGINT,
+    CodigoCurso INT,
+    Ciclo VARCHAR(2),
+    Seccion CHAR(1),
+    Nota FLOAT
+);
