@@ -1,5 +1,6 @@
 create database Proyecto2;
 use Proyecto2;
+drop database Proyecto2;
 
 CREATE TABLE Carrera (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -302,6 +303,131 @@ BEGIN
 END;
 //
 DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE consultarPensum(IN codigo_carrera INT)
+BEGIN
+    SELECT Codigo, Nombre, 
+           CASE WHEN Es_obligatorio = 1 THEN 'Sí' ELSE 'No' END AS Es_obligatorio,
+           Creditos_necesarios
+    FROM Curso
+    WHERE Carrera_id = codigo_carrera;
+END;
+//
+DELIMITER ;
+
+
+DELIMITER //
+CREATE PROCEDURE consultarEstudiante(IN carnet_estudiante BIGINT)
+BEGIN
+    SELECT e.Carnet, CONCAT(e.Nombres, ' ', e.Apellidos) AS Nombre_completo, 
+           e.Fecha_nacimiento, e.Correo, e.Telefono, e.Direccion, e.Numero_DPI, 
+           c.Nombre AS Carrera, e.Creditos
+    FROM Estudiante e
+    INNER JOIN Carrera c ON e.Carrera_id = c.id
+    WHERE e.Carnet = carnet_estudiante;
+END;
+//
+DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE consultarDocente(IN registro_siif INT)
+BEGIN
+    SELECT Registro_SIIF, CONCAT(Nombres, ' ', Apellidos) AS Nombre_completo, 
+           Fecha_nacimiento, Correo, Telefono, Direccion, Numero_DPI
+    FROM Docentes
+    WHERE Registro_SIIF = registro_siif;
+END;
+//
+DELIMITER ;
+
+
+DELIMITER //
+CREATE PROCEDURE consultarAsignados(
+    IN codigo_curso INT, 
+    IN ciclo VARCHAR(2), 
+    IN anio INT, 
+    IN seccion CHAR(1)
+)
+BEGIN
+    SELECT ac.Carnet, CONCAT(e.Nombres, ' ', e.Apellidos) AS Nombre_completo, 
+           e.Creditos
+    FROM Asignacion_curso ac
+    INNER JOIN Estudiante e ON ac.Carnet = e.Carnet
+    WHERE ac.Codigo_curso = codigo_curso AND ac.Ciclo = ciclo AND ac.Anio = anio AND ac.Seccion = seccion;
+END;
+//
+DELIMITER ;
+
+
+DELIMITER //
+CREATE PROCEDURE consultarAprobacion(
+    IN codigo_curso INT, 
+    IN ciclo VARCHAR(2), 
+    IN anio INT, 
+    IN seccion CHAR(1)
+)
+BEGIN
+    SELECT ac.Codigo_curso, ac.Carnet, CONCAT(e.Nombres, ' ', e.Apellidos) AS Nombre_completo, 
+           CASE WHEN n.Nota >= 61 THEN 'APROBADO' ELSE 'DESAPROBADO' END AS Estado
+    FROM Asignacion_curso ac
+    INNER JOIN Estudiante e ON ac.Carnet = e.Carnet
+    LEFT JOIN Nota n ON ac.Carnet = n.Carnet_estudiante AND ac.Codigo_curso = n.Codigo_curso
+    WHERE ac.Codigo_curso = codigo_curso AND ac.Ciclo = ciclo AND ac.Anio = anio AND ac.Seccion = seccion;
+END;
+//
+DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE consultarActas(IN codigo_curso INT)
+BEGIN
+    SELECT a.Codigo_curso, a.Seccion,
+           CASE 
+               WHEN a.Ciclo = '1S' THEN 'PRIMER SEMESTRE'
+               WHEN a.Ciclo = '2S' THEN 'SEGUNDO SEMESTRE'
+               WHEN a.Ciclo = 'VJ' THEN 'VACACIONES DE JUNIO'
+               WHEN a.Ciclo = 'VD' THEN 'VACACIONES DE DICIEMBRE'
+               ELSE a.Ciclo
+           END AS Ciclo, 
+           a.Anio, a.Cantidad_estudiantes, a.Fecha_generacion
+    FROM Acta a
+    WHERE a.Codigo_curso = codigo_curso
+    ORDER BY a.Fecha_generacion;
+END;
+//
+DELIMITER ;
+
+
+DELIMITER //
+CREATE PROCEDURE consultarDesasignacion(
+    IN codigo_curso INT, 
+    IN ciclo VARCHAR(2), 
+    IN anio INT, 
+    IN seccion CHAR(1)
+)
+BEGIN
+    DECLARE total_estudiantes INT;
+    DECLARE total_desasignados INT;
+
+    SELECT COUNT(*) INTO total_estudiantes
+    FROM Asignacion_curso
+    WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Anio = anio AND Seccion = seccion;
+
+    SELECT COUNT(*) INTO total_desasignados
+    FROM Desasignacion_curso
+    WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Anio = anio AND Seccion = seccion;
+
+    IF total_estudiantes = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'No hay estudiantes asignados a este curso y sección.';
+    ELSE
+        SELECT total_estudiantes AS Cantidad_estudiantes, total_desasignados AS Cantidad_desasignados,
+               (total_desasignados / total_estudiantes * 100) AS Porcentaje_desasignacion;
+    END IF;
+END;
+//
+DELIMITER ;
+
 
 
 
