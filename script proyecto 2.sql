@@ -1,6 +1,7 @@
+drop database Proyecto2;
 create database Proyecto2;
 use Proyecto2;
-drop database Proyecto2;
+
 
 CREATE TABLE Carrera (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -22,6 +23,20 @@ CREATE TABLE Estudiante (
     FOREIGN KEY (Carrera_id) REFERENCES Carrera(id)
 );
 
+
+CREATE TABLE Docentes (
+    Id INT AUTO_INCREMENT PRIMARY KEY,  -- Cambiado a INT
+    Nombres VARCHAR(255),
+    Apellidos VARCHAR(255),
+    Fecha_de_nacimiento DATE,
+    Correo VARCHAR(255),
+    Teléfono NUMERIC,
+    Dirección VARCHAR(255),
+    Número_de_DPI BIGINT,
+    registro_siif NUMERIC  -- Agrega esta columna
+);
+CREATE INDEX idx_docentes_registro_siif ON Docentes(registro_siif);
+
 CREATE TABLE Curso (
     Codigo INT PRIMARY KEY,
     Nombre VARCHAR(255) NOT NULL,
@@ -32,17 +47,18 @@ CREATE TABLE Curso (
     FOREIGN KEY (Carrera_id) REFERENCES Carrera(id)
 );
 
+
 CREATE TABLE Curso_habilitado (
     Id INT AUTO_INCREMENT PRIMARY KEY,
     Codigo_curso INT,
     Ciclo VARCHAR(2) NOT NULL,
-    Docente_id INT NOT NULL,
+    Docente_id NUMERIC,  -- Cambiado a INT
     Cupo_maximo INT NOT NULL,
     Seccion CHAR(1) NOT NULL,
     Anio_actual INT NOT NULL,
     Estudiantes_asignados INT DEFAULT 0,
     FOREIGN KEY (Codigo_curso) REFERENCES Curso(Codigo),
-    FOREIGN KEY (Docente_id) REFERENCES Docentes(Id)
+    FOREIGN KEY (Docente_id) REFERENCES Docentes(registro_siif)
 );
 
 CREATE TABLE Asignados (
@@ -104,6 +120,8 @@ CREATE TABLE Acta (
 );
 
 
+
+
 DELIMITER //
 CREATE PROCEDURE crearCarrera(IN nombre VARCHAR(255))
 BEGIN
@@ -143,7 +161,7 @@ CREATE PROCEDURE registrarDocente(
     IN registro_siif NUMERIC
 )
 BEGIN
-    INSERT INTO Docentes (Nombres, Apellidos, Fecha_nacimiento, Correo, Telefono, Direccion, Numero_DPI, Registro_SIIF)
+    INSERT INTO Docentes (Nombres, Apellidos, Fecha_de_nacimiento, Correo, Teléfono, Dirección, Número_de_DPI, Registro_SIIF)
     VALUES (nombres, apellidos, fecha_nacimiento, correo, telefono, direccion, numero_dpi, registro_siif);
 END;
 //
@@ -171,11 +189,13 @@ CREATE PROCEDURE habilitarCurso(
     IN ciclo VARCHAR(2), 
     IN docente_id INT, 
     IN cupo_maximo NUMERIC, 
-    IN seccion CHAR(1)
+    IN seccion CHAR(1),
+	IN anio_actual INT,
+    IN estudiantes_asignados INT
 )
 BEGIN
     INSERT INTO Curso_habilitado (Codigo_curso, Ciclo, Docente_id, Cupo_maximo, Seccion, Anio_actual, Estudiantes_asignados)
-    VALUES (codigo_curso, ciclo, docente_id, cupo_maximo, seccion, YEAR(CURDATE()), 0);
+    VALUES (codigo_curso, ciclo, docente_id, cupo_maximo, seccion, YEAR(CURDATE()), estudiantes_asignados);
 END;
 //
 DELIMITER ;
@@ -201,14 +221,18 @@ CREATE PROCEDURE asignarCurso(
     IN carnet_estudiante BIGINT
 )
 BEGIN
+    -- Declarar la variable curso_habilitado_id
+    DECLARE curso_habilitado_id INT;
+
     -- Validar que el estudiante no esté asignado al mismo curso o a otra sección
     IF EXISTS (SELECT 1 FROM Asignacion_curso WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Carnet_estudiante = carnet_estudiante) THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'El estudiante ya está asignado a este curso o sección';
     END IF;
-    
-    -- Validar otros criterios, como créditos necesarios, carrera, cupo máximo, etc.
-    
+
+    -- Obtener el Id del Curso_habilitado
+    SELECT Id INTO curso_habilitado_id FROM Curso_habilitado WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Anio_actual = YEAR(CURDATE());
+
     -- Si todas las validaciones son exitosas, realizar la asignación
     INSERT INTO Asignacion_curso (Codigo_curso, Ciclo, Seccion, Carnet_estudiante)
     VALUES (codigo_curso, ciclo, seccion, carnet_estudiante);
@@ -216,7 +240,7 @@ BEGIN
     -- Actualizar el contador de estudiantes asignados en Curso_habilitado
     UPDATE Curso_habilitado
     SET Estudiantes_asignados = Estudiantes_asignados + 1
-    WHERE Id = (SELECT Id FROM Curso_habilitado WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Anio_actual = YEAR(CURDATE()));
+    WHERE Id = curso_habilitado_id;
 END;
 //
 DELIMITER ;
@@ -229,12 +253,18 @@ CREATE PROCEDURE desasignarCurso(
     IN carnet_estudiante BIGINT
 )
 BEGIN
+    -- Declarar la variable curso_habilitado_id
+    DECLARE curso_habilitado_id INT;
+
     -- Validar que el estudiante esté asignado a este curso o sección
     IF NOT EXISTS (SELECT 1 FROM Asignacion_curso WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Carnet_estudiante = carnet_estudiante) THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'El estudiante no está asignado a este curso o sección';
     END IF;
-    
+
+    -- Obtener el Id del Curso_habilitado
+    SELECT Id INTO curso_habilitado_id FROM Curso_habilitado WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Anio_actual = YEAR(CURDATE());
+
     -- Realizar la desasignación
     DELETE FROM Asignacion_curso
     WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Carnet_estudiante = carnet_estudiante;
@@ -242,11 +272,10 @@ BEGIN
     -- Actualizar el contador de estudiantes asignados en Curso_habilitado
     UPDATE Curso_habilitado
     SET Estudiantes_asignados = Estudiantes_asignados - 1
-    WHERE Id = (SELECT Id FROM Curso_habilitado WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Anio_actual = YEAR(CURDATE()));
+    WHERE Id = curso_habilitado_id;
 END;
 //
 DELIMITER ;
-
 DELIMITER //
 CREATE PROCEDURE ingresarNota(
     IN codigo_curso NUMERIC, 
@@ -334,7 +363,7 @@ DELIMITER //
 CREATE PROCEDURE consultarDocente(IN registro_siif INT)
 BEGIN
     SELECT Registro_SIIF, CONCAT(Nombres, ' ', Apellidos) AS Nombre_completo, 
-           Fecha_nacimiento, Correo, Telefono, Direccion, Numero_DPI
+           Fecha_de_nacimiento, Correo, Teléfono, Dirección, Número_de_DPI
     FROM Docentes
     WHERE Registro_SIIF = registro_siif;
 END;
@@ -400,6 +429,7 @@ DELIMITER ;
 
 DELIMITER //
 CREATE PROCEDURE consultarDesasignacion(
+
     IN codigo_curso INT, 
     IN ciclo VARCHAR(2), 
     IN anio INT, 
@@ -428,8 +458,20 @@ END;
 //
 DELIMITER ;
 
-
-
-
-
+CALL crearCarrera('Ingeniería Informática');
+CALL registrarEstudiante(123456789, 'Juan', 'Pérez', '1995-05-15', 'juan@example.com', 1234567890, '123 Main St', 1234567890123, 1);
+CALL registrarDocente('María', 'González', '1980-10-20', 'maria@example.com', 9876543210, '456 Elm St', 9876543210123, 1001);
+CALL crearCurso(101, 'Introducción a la Programación', 4, 4, 1, 1);
+CALL habilitarCurso(101, '1S', 1001, 30, 'A','5','51');
+CALL agregarHorario(1, 1, 'Lunes 10:00 AM - 12:00 PM');
+CALL asignarCurso(101, '1S', 'A', 123456789);
+CALL ingresarNota(101, '1S', 'A', 123456789, 85);
+-- CALL ingresarNota(101, '1S', 'A', 123456789, 85);
+CALL generarActa(101, '1S', 'A');
+CALL consultarPensum(1); -- Consultar el pensum de la carrera con ID 1
+CALL consultarEstudiante(123456789); -- Consultar el estudiante con carnet 123456789
+CALL consultarDocente(1001); -- Consultar el docente con registro SIIF 1001
+CALL consultarAsignados(101, '1S', 2023, 'A'); -- Consultar los estudiantes asignados a un curso en el primer semestre del 2023 en la sección 'A'
+CALL consultarAprobacion(101, '1S', 2023, 'A'); -- Consultar si los estudiantes aprobaron o desaprobaron un curso en el primer semestre del 2023 en la sección 'A'
+CALL desasignarCurso(101, '1S', 'A', 123456789);
 
