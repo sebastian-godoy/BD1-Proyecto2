@@ -33,12 +33,12 @@ CREATE TABLE Docentes (
     Teléfono NUMERIC,
     Dirección VARCHAR(255),
     Número_de_DPI BIGINT,
-    registro_siif NUMERIC  -- Agrega esta columna
+    registro_siif NUMERIC UNIQUE  -- Agrega esta columna
 );
 CREATE INDEX idx_docentes_registro_siif ON Docentes(registro_siif);
 
 CREATE TABLE Curso (
-    Codigo INT PRIMARY KEY,
+    Codigo INT PRIMARY KEY UNIQUE,
     Nombre VARCHAR(255) NOT NULL,
     Creditos_necesarios INT NOT NULL,
     Creditos_otorga INT NOT NULL,
@@ -50,12 +50,12 @@ CREATE TABLE Curso (
 
 CREATE TABLE Curso_habilitado (
     Id INT AUTO_INCREMENT PRIMARY KEY,
-    Codigo_curso INT,
+    Codigo_curso INT NOT NULL UNIQUE, 
     Ciclo VARCHAR(2) NOT NULL,
-    Docente_id NUMERIC,  -- Cambiado a INT
+    Docente_id NUMERIC NOT NULL,  -- Cambiado a INT
     Cupo_maximo INT NOT NULL,
     Seccion CHAR(1) NOT NULL,
-    Anio_actual INT NOT NULL,
+    Anio_actual INT DEFAULT 0,
     Estudiantes_asignados INT DEFAULT 0,
     FOREIGN KEY (Codigo_curso) REFERENCES Curso(Codigo),
     FOREIGN KEY (Docente_id) REFERENCES Docentes(registro_siif)
@@ -158,7 +158,7 @@ DELIMITER //
 CREATE PROCEDURE registrarDocente(
     IN nombres VARCHAR(255), 
     IN apellidos VARCHAR(255), 
-    IN fecha_nacimiento VARCHAR(10),  -- Cambiado el tipo de dato a VARCHAR
+    IN fecha_nacimiento VARCHAR(10), 
     IN correo VARCHAR(255), 
     IN telefono BIGINT, 
     IN direccion VARCHAR(255), 
@@ -169,6 +169,12 @@ BEGIN
     -- Convertir la fecha al formato 'YYYY-MM-DD'
     SET fecha_nacimiento = STR_TO_DATE(fecha_nacimiento, '%d-%m-%Y');
 
+    -- Validar que el correo sea válido usando una expresión regular
+    IF correo NOT REGEXP '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,4}$' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El correo ingresado no es válido';
+    END IF;
+
     -- Insertar los datos en la tabla
     INSERT INTO Docentes (Nombres, Apellidos, Fecha_de_nacimiento, Correo, Teléfono, Dirección, Número_de_DPI, Registro_SIIF)
     VALUES (nombres, apellidos, fecha_nacimiento, correo, telefono, direccion, numero_dpi, registro_siif);
@@ -178,33 +184,54 @@ DELIMITER ;
 
 DELIMITER //
 CREATE PROCEDURE crearCurso(
-    IN codigo NUMERIC, 
+    IN codigo INT, 
     IN nombre VARCHAR(255), 
-    IN creditos_necesarios NUMERIC, 
-    IN creditos_otorga NUMERIC, 
+    IN creditos_necesarios INT, 
+    IN creditos_otorga INT, 
     IN carrera_id INT, 
     IN es_obligatorio BOOLEAN
 )
 BEGIN
-    INSERT INTO Curso (Codigo, Nombre, Creditos_necesarios, Creditos_otorga, Carrera_id, Es_obligatorio)
-    VALUES (codigo, nombre, creditos_necesarios, creditos_otorga, carrera_id, es_obligatorio);
+    -- Verificar que los créditos no sean negativos
+    IF creditos_necesarios < 0 OR creditos_otorga < 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Los créditos necesarios y otorgados no pueden ser negativos';
+    ELSE
+        -- Verificar que la carrera especificada existe
+        IF NOT EXISTS (SELECT 1 FROM Carrera WHERE id = carrera_id) THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'La carrera especificada no existe';
+        ELSE
+            -- Insertar el curso si las validaciones son exitosas
+            INSERT INTO Curso (Codigo, Nombre, Creditos_necesarios, Creditos_otorga, Carrera_id, Es_obligatorio)
+            VALUES (codigo, nombre, creditos_necesarios, creditos_otorga, carrera_id, es_obligatorio);
+        END IF;
+    END IF;
 END;
 //
 DELIMITER ;
 
 DELIMITER //
+DELIMITER //
 CREATE PROCEDURE habilitarCurso(
-    IN codigo_curso NUMERIC, 
+    IN codigo_curso INT, 
     IN ciclo VARCHAR(2), 
     IN docente_id INT, 
-    IN cupo_maximo NUMERIC, 
-    IN seccion CHAR(1),
-	IN anio_actual INT,
-    IN estudiantes_asignados INT
+    IN cupo_maximo INT, 
+    IN seccion CHAR(1)-- ,
+    -- IN anio_actual INT,
+    -- IN estudiantes_asignados INT
 )
 BEGIN
-    INSERT INTO Curso_habilitado (Codigo_curso, Ciclo, Docente_id, Cupo_maximo, Seccion, Anio_actual, Estudiantes_asignados)
-    VALUES (codigo_curso, ciclo, docente_id, cupo_maximo, seccion, YEAR(CURDATE()), estudiantes_asignados);
+    -- Verificar que la sección sea una letra
+    IF NOT (seccion REGEXP '^[A-Za-z]$') THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'La sección debe ser una letra';
+    ELSE
+        -- Insertar el curso habilitado si la sección es una letra
+        INSERT INTO Curso_habilitado (Codigo_curso, Ciclo, Docente_id, Cupo_maximo, Seccion, Anio_actual, Estudiantes_asignados)
+        VALUES (codigo_curso, ciclo, docente_id, cupo_maximo, seccion, YEAR(CURDATE()), 0);
+    END IF;
 END;
 //
 DELIMITER ;
@@ -216,43 +243,112 @@ CREATE PROCEDURE agregarHorario(
     IN horario VARCHAR(255)
 )
 BEGIN
-    INSERT INTO Horario_curso (Curso_habilitado_id, Dia_semana, Horario)
-    VALUES (id_curso_habilitado, dia, horario);
+    -- Verificar si el ID del curso habilitado existe en la tabla "Curso_habilitado"
+    DECLARE curso_habilitado_count INT;
+    SELECT COUNT(*) INTO curso_habilitado_count
+    FROM Curso_habilitado
+    WHERE Id = id_curso_habilitado;
+    
+    -- Verificar que el valor del día esté en el rango de 1 a 7
+    IF dia < 1 OR dia > 7 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El valor del día debe estar en el rango de 1 a 7';
+    END IF;
+
+    IF curso_habilitado_count = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El ID del curso habilitado no existe';
+    ELSE
+        -- Insertar el horario si el ID del curso habilitado existe y el día es válido
+        INSERT INTO Horario_curso (Curso_habilitado_id, Dia_semana, Horario)
+        VALUES (id_curso_habilitado, dia, horario);
+    END IF;
 END;
 //
 DELIMITER ;
 
 DELIMITER //
 CREATE PROCEDURE asignarCurso(
-    IN codigo_curso NUMERIC, 
+    IN codigo_curso INT, 
     IN ciclo VARCHAR(2), 
     IN seccion CHAR(1), 
     IN carnet_estudiante BIGINT
 )
 BEGIN
-    -- Declarar la variable curso_habilitado_id
+    -- Variables locales
     DECLARE curso_habilitado_id INT;
+    DECLARE creditos_necesarios INT;
+    DECLARE carrera_curso INT;
+    DECLARE cupo_maximo INT;
 
     -- Validar que el estudiante no esté asignado al mismo curso o a otra sección
     IF EXISTS (SELECT 1 FROM Asignacion_curso WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Carnet_estudiante = carnet_estudiante) THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'El estudiante ya está asignado a este curso o sección';
+    ELSE
+        -- Verificar que el estudiante exista
+        IF NOT EXISTS (SELECT 1 FROM Estudiante WHERE Carnet = carnet_estudiante) THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'El carnet del estudiante no existe';
+        ELSE
+            -- Obtener el Id del Curso_habilitado
+            SELECT Id INTO curso_habilitado_id 
+            FROM Curso_habilitado 
+            WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Anio_actual = YEAR(CURDATE())
+            LIMIT 1;  -- Agregar LIMIT 1 para asegurar una única fila
+
+            -- Verificar que el Curso_habilitado existe
+            IF curso_habilitado_id IS NULL THEN
+                SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'El curso y la sección no están habilitados para este ciclo';
+            ELSE
+                -- Obtener la carrera del curso habilitado
+                SELECT Carrera_id INTO carrera_curso
+                FROM Curso_habilitado ch
+                JOIN Curso c ON ch.Codigo_curso = c.Codigo
+                WHERE ch.Id = curso_habilitado_id;
+
+                -- Verificar que el estudiante tenga los créditos necesarios
+                SELECT Creditos_necesarios INTO creditos_necesarios 
+                FROM Curso 
+                WHERE Codigo = codigo_curso;
+
+                -- Verificar que la carrera del estudiante coincide con la carrera del curso
+                IF NOT EXISTS (SELECT 1 FROM Estudiante WHERE Carnet = carnet_estudiante AND Carrera_id = carrera_curso) THEN
+                    SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'La carrera del estudiante no coincide con la carrera del curso';
+                ELSE
+                    -- Verificar que el estudiante no haya alcanzado el cupo máximo
+                    SELECT Cupo_maximo INTO cupo_maximo 
+                    FROM Curso_habilitado 
+                    WHERE Id = curso_habilitado_id;
+
+                    IF (SELECT Estudiantes_asignados FROM Curso_habilitado WHERE Id = curso_habilitado_id) >= cupo_maximo THEN
+                        SIGNAL SQLSTATE '45000'
+                        SET MESSAGE_TEXT = 'La sección ha alcanzado el cupo máximo';
+                    ELSE
+                        -- Si todas las validaciones son exitosas, realizar la asignación
+                        INSERT INTO Asignacion_curso (Codigo_curso, Ciclo, Seccion, Carnet_estudiante)
+                        VALUES (codigo_curso, ciclo, seccion, carnet_estudiante);
+
+                        -- Actualizar el contador de estudiantes asignados en Curso_habilitado
+                        UPDATE Curso_habilitado
+                        SET Estudiantes_asignados = Estudiantes_asignados + 1
+                        WHERE Id = curso_habilitado_id;
+                    END IF;
+                END IF;
+            END IF;
+        END IF;
     END IF;
-
-    -- Obtener el Id del Curso_habilitado
-    SELECT Id INTO curso_habilitado_id FROM Curso_habilitado WHERE Codigo_curso = codigo_curso AND Ciclo = ciclo AND Seccion = seccion AND Anio_actual = YEAR(CURDATE());
-
-    -- Si todas las validaciones son exitosas, realizar la asignación
-    INSERT INTO Asignacion_curso (Codigo_curso, Ciclo, Seccion, Carnet_estudiante)
-    VALUES (codigo_curso, ciclo, seccion, carnet_estudiante);
-    
-    -- Actualizar el contador de estudiantes asignados en Curso_habilitado
-    UPDATE Curso_habilitado
-    SET Estudiantes_asignados = Estudiantes_asignados + 1
-    WHERE Id = curso_habilitado_id;
 END;
 //
 DELIMITER ;
+
+
+
+
+
+
 
 DELIMITER //
 CREATE PROCEDURE desasignarCurso(
